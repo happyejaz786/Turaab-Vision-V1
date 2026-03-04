@@ -2,3 +2,6 @@ streamlit
 easyocr
 google-genai
 pillow
+fpdf
+pandas
+firebase-admin
