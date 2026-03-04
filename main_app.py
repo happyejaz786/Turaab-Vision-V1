@@ -6,36 +6,32 @@ import numpy as np
 import ssl
 import random
 import time
-import firebase_admin
-from firebase_admin import credentials, firestore
 from fpdf import FPDF
 from datetime import datetime
+import firebase_admin
+from firebase_admin import credentials, firestore
 
-# SSL Fix for models download
+# SSL Fix
 ssl._create_default_https_context = ssl._create_unverified_context
 
-# --- CONFIGURATION ---
-st.set_page_config(page_title="Turaab Vision V2.0", page_icon="📄", layout="wide")
-
-# --- ARABIC BISMILLAH & TITLE ---
+st.set_page_config(page_title="Turaab Vision V2.0", page_icon="📄", layout="centered")
 st.markdown("<h2 style='text-align: center; color: #4CAF50;'>بِسْمِ ٱللَّٰهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ</h2>", unsafe_allow_html=True)
-st.title("📄 Turaab Vision - Version 2.0 (Superfast)")
+st.title("📄 Turaab Vision - V2.0 (Lite & Fast)")
 
-# --- SECRETS LOAD & FIREBASE SETUP (Bulletproof) ---
+# --- FIREBASE SETUP ---
 db = None
 try:
     if not firebase_admin._apps:
         firebase_creds = dict(st.secrets["firebase"])
         if "private_key" in firebase_creds:
             firebase_creds["private_key"] = firebase_creds["private_key"].replace("\\n", "\n")
-        
         cred = credentials.Certificate(firebase_creds)
         firebase_admin.initialize_app(cred)
     db = firestore.client()
-except Exception as e:
-    st.warning("⚠️ Database connect nahi ho saka. App kaam karegi, par History save nahi hogi. Error: " + str(e))
+except Exception:
+    st.warning("⚠️ Firebase connect nahi hua, par app chalti rahegi.")
 
-# --- GEMINI API SETUP ---
+# --- GEMINI SETUP ---
 try:
     API_KEYS = st.secrets["gemini"]["api_keys"]
     CURRENT_API_KEY = random.choice(API_KEYS) 
@@ -43,10 +39,10 @@ except Exception:
     CURRENT_API_KEY = None
     st.error("API Keys missing in Streamlit Secrets!")
 
-# --- FUNCTIONS ---
+# Memory-Safe OCR Loading
 @st.cache_resource
 def load_ocr_reader():
-    return easyocr.Reader(['hi', 'en'], gpu=False)
+    return easyocr.Reader(['en', 'hi'], gpu=False)
 
 def create_pdf(text_content):
     pdf = FPDF()
@@ -54,124 +50,67 @@ def create_pdf(text_content):
     pdf.set_font("Arial", size=12)
     pdf.cell(200, 10, txt="Turaab Vision - Mission Summary", ln=1, align='C')
     pdf.ln(10)
-    
     clean_text = text_content.replace('₹', 'Rs.').replace('*', '')
     safe_text = clean_text.encode('latin-1', 'ignore').decode('latin-1')
-    
     pdf.multi_cell(0, 10, txt=safe_text)
     return pdf.output(dest='S').encode('latin-1')
 
-# --- UI DESIGN ---
-tab1, tab2 = st.tabs(["🔍 Scan Document", "📜 History"])
+# --- UI ---
+uploaded_file = st.file_uploader("Upload Document Image", type=['jpg', 'jpeg', 'png'])
 
-with tab1:
-    uploaded_file = st.file_uploader("Upload Document Image (JPG, PNG)", type=['jpg', 'jpeg', 'png'])
-
-    if uploaded_file:
-        img = Image.open(uploaded_file)
-        st.image(img, width=400, caption="Uploaded Image")
-        
-        if st.button("🚀 Process & Save"):
-            if not CURRENT_API_KEY:
-                st.error("API Key missing hai, process aage nahi badh sakta.")
-            else:
-                with st.spinner("AI Analysis chal raha hai... (Models ghoom rahe hain)"):
-                    try:
-                        # 1. OCR Section
-                        reader = load_ocr_reader()
-                        img_array = np.array(img)
-                        ocr_result = reader.readtext(img_array, detail=0)
-                        extracted_text = " ".join(ocr_result)
-                        
-                        # 2. Gemini Analysis (Mission Summary)
-                        prompt = f"""
-                        System Role: Professional Educator & Analytical Summarizer.
-                        Task: Decode text from OCR and summarize for students.
-                        1. Identify Document/Topic Type.
-                        2. Provide detailed Executive Summary.
-                        3. Extract Key Points in simple bullet points.
-                        
-                        OCR RAW: {extracted_text}
-                        """
-                        
-                        client = genai.Client(api_key=CURRENT_API_KEY)
-                        
-                        # --- TRUE DYNAMIC AUTO-RETRY MECHANISM ---
-                        report_text = None
-                        FAST_MODELS = [
-                            "gemini-2.5-flash-lite", 
-                            "gemini-flash-latest",
-                            "gemini-2.0-flash-lite"
-                        ]
-                        
-                        # Har model ko bari-bari try karenge
-                        for attempt, current_try_model in enumerate(FAST_MODELS):
-                            try:
-                                response = client.models.generate_content(
-                                    model=current_try_model, 
-                                    contents=[prompt, img]
-                                )
-                                report_text = response.text
-                                st.success(f"✅ Analysis Complete! (Used Model: {current_try_model})")
-                                break # Success mil gayi, loop se bahar aa jao
-                                
-                            except Exception as api_err:
-                                err_str = str(api_err)
-                                if "503" in err_str or "429" in err_str:
-                                    if attempt < len(FAST_MODELS) - 1:
-                                        # Agar ye model fail hua toh agle model ke liye batao aur 2 sec ruko
-                                        st.warning(f"⚠️ {current_try_model} busy hai. Agle model par switch kar raha hoon...")
-                                        time.sleep(2)
-                                    else:
-                                        st.error("❌ Saare fast models abhi Google ke server par busy hain. Kripya thodi der baad try karein.")
+if uploaded_file:
+    img = Image.open(uploaded_file)
+    st.image(img, width=400)
+    
+    if st.button("🚀 Process Document"):
+        if not CURRENT_API_KEY:
+            st.error("API Key missing hai.")
+        else:
+            with st.spinner("AI Analysis chal raha hai... (Thoda sabr karein)"):
+                try:
+                    reader = load_ocr_reader()
+                    img_array = np.array(img)
+                    ocr_result = reader.readtext(img_array, detail=0)
+                    extracted_text = " ".join(ocr_result)
+                    
+                    prompt = f"""
+                    System Role: Professional Educator.
+                    Task: Decode OCR and summarize.
+                    1. Identify Topic.
+                    2. Provide Summary.
+                    3. Key Points.
+                    OCR RAW: {extracted_text}
+                    """
+                    
+                    client = genai.Client(api_key=CURRENT_API_KEY)
+                    FAST_MODELS = ["gemini-2.5-flash-lite", "gemini-flash-latest", "gemini-2.0-flash-lite"]
+                    
+                    report_text = None
+                    for attempt, model_name in enumerate(FAST_MODELS):
+                        try:
+                            response = client.models.generate_content(model=model_name, contents=[prompt, img])
+                            report_text = response.text
+                            st.success(f"✅ Analysis Complete! (Model: {model_name})")
+                            break
+                        except Exception as e:
+                            if "503" in str(e) or "429" in str(e):
+                                if attempt < len(FAST_MODELS) - 1:
+                                    st.warning(f"⚠️ {model_name} busy. Switching model...")
+                                    time.sleep(2)
                                 else:
-                                    st.error(f"API Error: {api_err}")
-                                    break
+                                    st.error("❌ Servers busy hain. Thodi der baad try karein.")
+                            else:
+                                st.error(f"Error: {e}")
+                                break
+                    
+                    if report_text:
+                        if db is not None:
+                            try:
+                                db.collection('scans').add({'timestamp': datetime.now(), 'summary': report_text})
+                            except:
+                                pass
                         
-                        # Agar summary ban gayi toh aage badho
-                        if report_text:
-                            # 3. Save to Firebase safely
-                            if db is not None:
-                                try:
-                                    db.collection('scans').add({'timestamp': datetime.now(), 'summary': report_text})
-                                    st.toast("History Saved!", icon="💾")
-                                except Exception as fb_err:
-                                    st.warning(f"Report ban gayi hai, par Firebase mein save nahi hui: {fb_err}")
-                                
-                            st.subheader("💡 Mission Summary Report")
-                            st.markdown(report_text)
-                            
-                            with st.expander("See Raw Extracted Text"):
-                                st.write(extracted_text)
-                            
-                            # 4. PDF Download Generation
-                            st.markdown("---")
-                            pdf_data = create_pdf(report_text)
-                            st.download_button(
-                                label="📥 Download PDF", 
-                                data=pdf_data, 
-                                file_name=f"Turaab_Report_{datetime.now().strftime('%H%M%S')}.pdf"
-                            )
-                        
-                    except Exception as err:
-                        st.error(f"System Error: {err}")
-
-with tab2:
-    if db is not None:
-        try:
-            scans = db.collection('scans').order_by('timestamp', direction=firestore.Query.DESCENDING).limit(10).stream()
-            count = 0
-            for scan in scans:
-                count += 1
-                data = scan.to_dict()
-                with st.expander(f"Scan - {data['timestamp'].strftime('%d %b, %H:%M')}"):
-                    st.markdown(data['summary'])
-            if count == 0:
-                st.info("Abhi history khali hai.")
-        except Exception as e:
-            st.error(f"History load karne mein error: {e}")
-    else:
-        st.info("Database connected nahi hai isliye history yahan nahi dikhegi.")
-            
-st.markdown("---")
-st.caption("Powered by Turaab Vision | Superfast Edition")
+                        st.markdown(report_text)
+                        st.download_button(label="📥 Download PDF", data=create_pdf(report_text), file_name="Turaab_Report.pdf")
+                except Exception as err:
+                    st.error(f"System Error: {err}")
