@@ -81,11 +81,55 @@ def create_pdf(text_content):
     return pdf.output(dest='S').encode('latin-1')
 
 # ------------------ MODELS ------------------
+# ------------------ ADVANCED MODEL + API ROTATION ------------------
+
 FAST_MODELS = [
     "gemini-1.5-flash",
     "gemini-1.5-pro"
 ]
 
+API_KEYS = st.secrets["gemini"]["api_keys"]
+
+report_text = None
+max_attempts = len(FAST_MODELS) * len(API_KEYS)
+
+attempt_count = 0
+
+for model_name in FAST_MODELS:
+    for api_key in API_KEYS:
+
+        try:
+            attempt_count += 1
+
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel(model_name)
+
+            response = model.generate_content(prompt)
+            report_text = response.text
+
+            st.success(
+                f"✅ Success (Model: {model_name} | API Key #{API_KEYS.index(api_key)+1})"
+            )
+            break
+
+        except Exception as e:
+            error_str = str(e)
+
+            if "429" in error_str or "503" in error_str:
+                wait_time = 2 ** attempt_count  # exponential backoff
+                st.warning(
+                    f"{model_name} busy with this key. Retrying in {wait_time}s..."
+                )
+                time.sleep(wait_time)
+            else:
+                st.error(f"Non-retryable API Error: {e}")
+                break
+
+    if report_text:
+        break
+
+if not report_text:
+    st.error("❌ All models and API keys exhausted. Please try later.")
 # ------------------ UI ------------------
 tab1, tab2 = st.tabs(["🔍 Scan Document", "📜 History"])
 
@@ -238,3 +282,4 @@ with tab2:
 # ------------------ FOOTER ------------------
 st.markdown("---")
 st.caption("Powered by Turaab Vision 2.0 | Stable Production Edition")
+
