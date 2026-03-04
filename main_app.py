@@ -35,22 +35,12 @@ try:
 except Exception as e:
     st.warning("⚠️ Database connect nahi ho saka. App kaam karegi, par History save nahi hogi. Error: " + str(e))
 
-# --- GEMINI API & MODEL SETUP (Gen-Z Speed Rotator) ---
+# --- GEMINI API SETUP ---
 try:
     API_KEYS = st.secrets["gemini"]["api_keys"]
     CURRENT_API_KEY = random.choice(API_KEYS) 
-    
-    # Gen-Z Fast Models Pool (Sirf sabse tez aur available models)
-    FAST_MODELS = [
-        "gemini-2.5-flash-lite", 
-        "gemini-flash-latest",
-        "gemini-2.0-flash-lite"
-    ]
-    CURRENT_MODEL = random.choice(FAST_MODELS)
-    
 except Exception:
     CURRENT_API_KEY = None
-    CURRENT_MODEL = None
     st.error("API Keys missing in Streamlit Secrets!")
 
 # --- FUNCTIONS ---
@@ -85,7 +75,7 @@ with tab1:
             if not CURRENT_API_KEY:
                 st.error("API Key missing hai, process aage nahi badh sakta.")
             else:
-                with st.spinner(f"AI Analysis kar raha hai... (Model: {CURRENT_MODEL})"):
+                with st.spinner("AI Analysis chal raha hai... (Models ghoom rahe hain)"):
                     try:
                         # 1. OCR Section
                         reader = load_ocr_reader()
@@ -106,28 +96,34 @@ with tab1:
                         
                         client = genai.Client(api_key=CURRENT_API_KEY)
                         
-                        # --- AUTO-RETRY MECHANISM (The Game Changer) ---
-                        max_retries = 3
+                        # --- TRUE DYNAMIC AUTO-RETRY MECHANISM ---
                         report_text = None
+                        FAST_MODELS = [
+                            "gemini-2.5-flash-lite", 
+                            "gemini-flash-latest",
+                            "gemini-2.0-flash-lite"
+                        ]
                         
-                        for attempt in range(max_retries):
+                        # Har model ko bari-bari try karenge
+                        for attempt, current_try_model in enumerate(FAST_MODELS):
                             try:
                                 response = client.models.generate_content(
-                                    model=CURRENT_MODEL, 
+                                    model=current_try_model, 
                                     contents=[prompt, img]
                                 )
                                 report_text = response.text
-                                break # Success, exit loop
+                                st.success(f"✅ Analysis Complete! (Used Model: {current_try_model})")
+                                break # Success mil gayi, loop se bahar aa jao
                                 
                             except Exception as api_err:
                                 err_str = str(api_err)
                                 if "503" in err_str or "429" in err_str:
-                                    if attempt < max_retries - 1:
-                                        wait_time = attempt + 2
-                                        st.toast(f"Server busy. Retrying in {wait_time}s...", icon="⏳")
-                                        time.sleep(wait_time)
+                                    if attempt < len(FAST_MODELS) - 1:
+                                        # Agar ye model fail hua toh agle model ke liye batao aur 2 sec ruko
+                                        st.warning(f"⚠️ {current_try_model} busy hai. Agle model par switch kar raha hoon...")
+                                        time.sleep(2)
                                     else:
-                                        st.error("Google ke servers abhi bahut zyada load par hain. Kripya thodi der baad try karein.")
+                                        st.error("❌ Saare fast models abhi Google ke server par busy hain. Kripya thodi der baad try karein.")
                                 else:
                                     st.error(f"API Error: {api_err}")
                                     break
@@ -138,11 +134,9 @@ with tab1:
                             if db is not None:
                                 try:
                                     db.collection('scans').add({'timestamp': datetime.now(), 'summary': report_text})
-                                    st.success("✅ Analysis Complete & Saved to History!")
+                                    st.toast("History Saved!", icon="💾")
                                 except Exception as fb_err:
                                     st.warning(f"Report ban gayi hai, par Firebase mein save nahi hui: {fb_err}")
-                            else:
-                                st.success("✅ Analysis Complete!")
                                 
                             st.subheader("💡 Mission Summary Report")
                             st.markdown(report_text)
