@@ -94,11 +94,11 @@ if uploaded_file:
                     OCR RAW: {extracted_text}
                     """
                     
-                    # 3. FAST MODELS POOL (Stable versions)
+                    # 3. FAST MODELS POOL (Aapki List Ke Mutabiq)
                     FAST_MODELS = [
-                        "gemini-1.5-flash",        # Sabse stable aur fast
-                        "gemini-1.5-flash-8b",     # Ek aur lite version
-                        "gemini-2.0-flash-exp"     # Advance but stable experiment
+                        "gemini-2.5-flash-lite",   # Aapki list se 
+                        "gemini-2.0-flash-lite",   # Aapki list se 
+                        "gemini-flash-latest"      # Aapki list se 
                     ]
                     
                     report_text = None
@@ -152,3 +152,4 @@ if uploaded_file:
                         
                 except Exception as err:
                     st.error(f"System Error: {err}")
+
