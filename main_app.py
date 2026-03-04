@@ -143,47 +143,34 @@ OCR TEXT:
 {extracted_text}
 """
 
-                    # ---------------- MODEL ROTATION ----------------
-                    FAST_MODELS = [
-                        "gemini-1.5-flash",
-                        "gemini-1.5-pro"
-                    ]
+# ---------------- MODEL ROTATION ----------------
+FAST_MODEL = "gemini-pro"
+report_text = None
 
-                    report_text = None
+for api_key in API_KEYS:
+    try:
+        genai.configure(api_key=api_key)
 
-                    for model_name in FAST_MODELS:
-                        for api_key in API_KEYS:
-                            try:
-                                genai.configure(api_key=api_key)
-                                model = genai.GenerativeModel("gemini-pro")
-                                #model = genai.GenerativeModel(model_name)
+        model = genai.GenerativeModel(FAST_MODEL)
 
-                                response = model.generate_content(prompt)
-                                report_text = response.text
+        response = model.generate_content(prompt)
+        report_text = response.text
 
-                                st.success(
-                                    f"✅ Success (Model: {model_name})"
-                                )
-                                break
+        st.success("✅ Success")
+        break
 
-                            except Exception as api_error:
-                                error_str = str(api_error)
+    except Exception as api_error:
+        error_str = str(api_error)
 
-                                if "429" in error_str or "503" in error_str:
-                                    st.warning(
-                                        f"{model_name} busy. Switching..."
-                                    )
-                                    time.sleep(2)
-                                else:
-                                    st.error(f"API Error: {api_error}")
-                                    break
+        if "429" in error_str or "503" in error_str:
+            st.warning("Rate limited. Switching API key...")
+            time.sleep(2)
+        else:
+            st.error(f"API Error: {api_error}")
+            break
 
-                        if report_text:
-                            break
-
-                    if not report_text:
-                        st.error("❌ All models and keys exhausted.")
-                        st.stop()
+if not report_text:
+    st.error("❌ All API keys exhausted.")
 
                     # ---------------- SAVE TO FIREBASE ----------------
                     if db:
@@ -260,4 +247,5 @@ with tab2:
 
 st.markdown("---")
 st.caption("Powered by Turaab Vision | Production Stable Edition")
+
 
