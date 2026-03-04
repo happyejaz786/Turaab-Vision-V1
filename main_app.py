@@ -166,8 +166,8 @@ with tab1:
                         st.error("OCR koi text detect nahi kar paya.")
                         st.stop()
 
-                    # -------- 2. PROMPT --------
-                    prompt = f"""
+                    # -------- 2. CREATE PROMPT --------
+prompt = f"""
 You are a Professional Educator and Analytical Summarizer.
 
 Your task:
@@ -282,4 +282,5 @@ with tab2:
 # ------------------ FOOTER ------------------
 st.markdown("---")
 st.caption("Powered by Turaab Vision 2.0 | Stable Production Edition")
+
 
