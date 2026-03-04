@@ -80,8 +80,8 @@ def create_pdf(text_content):
 
     return pdf.output(dest='S').encode('latin-1')
 
-# ------------------ MODELS ------------------
 # ------------------ ADVANCED MODEL + API ROTATION ------------------
+# -------- 3. ADVANCED MODEL + API ROTATION --------
 
 FAST_MODELS = [
     "gemini-1.5-flash",
@@ -91,8 +91,6 @@ FAST_MODELS = [
 API_KEYS = st.secrets["gemini"]["api_keys"]
 
 report_text = None
-max_attempts = len(FAST_MODELS) * len(API_KEYS)
-
 attempt_count = 0
 
 for model_name in FAST_MODELS:
@@ -116,9 +114,9 @@ for model_name in FAST_MODELS:
             error_str = str(e)
 
             if "429" in error_str or "503" in error_str:
-                wait_time = 2 ** attempt_count  # exponential backoff
+                wait_time = min(2 ** attempt_count, 10)
                 st.warning(
-                    f"{model_name} busy with this key. Retrying in {wait_time}s..."
+                    f"{model_name} busy. Retrying in {wait_time}s..."
                 )
                 time.sleep(wait_time)
             else:
@@ -282,5 +280,6 @@ with tab2:
 # ------------------ FOOTER ------------------
 st.markdown("---")
 st.caption("Powered by Turaab Vision 2.0 | Stable Production Edition")
+
 
 
