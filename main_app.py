@@ -4,7 +4,6 @@ import google.generativeai as genai
 from PIL import Image
 import numpy as np
 import ssl
-import random
 import time
 import firebase_admin
 from firebase_admin import credentials, firestore
@@ -29,18 +28,16 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-st.title("📄 Turaab Vision - Version 2.0 (Production Edition)")
+st.title("📄 Turaab Vision - Version 2.0 (Production Stable)")
 
 # =====================================================
 # FIREBASE INITIALIZATION
 # =====================================================
 
 db = None
-
 try:
     if not firebase_admin._apps:
         firebase_creds = dict(st.secrets["firebase"])
-
         if "private_key" in firebase_creds:
             firebase_creds["private_key"] = firebase_creds["private_key"].replace("\\n", "\n")
 
@@ -49,7 +46,7 @@ try:
 
     db = firestore.client()
 
-except Exception as e:
+except Exception:
     st.warning("⚠️ Firebase not connected. History disabled.")
 
 # =====================================================
@@ -60,7 +57,7 @@ API_KEYS = []
 try:
     API_KEYS = st.secrets["gemini"]["api_keys"]
 except Exception:
-    st.error("❌ Gemini API Keys missing in Streamlit Secrets!")
+    st.error("❌ Gemini API Keys missing in Secrets!")
 
 # =====================================================
 # OCR CACHE
@@ -82,21 +79,19 @@ def create_pdf(text_content):
     pdf.cell(200, 10, txt="Turaab Vision - Mission Summary", ln=True, align='C')
     pdf.ln(10)
 
-    clean_text = text_content.replace('₹', 'Rs.')
-    safe_text = clean_text.encode('latin-1', 'ignore').decode('latin-1')
-
+    safe_text = text_content.encode('latin-1', 'ignore').decode('latin-1')
     pdf.multi_cell(0, 8, txt=safe_text)
 
     return pdf.output(dest='S').encode('latin-1')
 
 # =====================================================
-# UI TABS
+# UI
 # =====================================================
 
 tab1, tab2 = st.tabs(["🔍 Scan Document", "📜 History"])
 
 # =====================================================
-# TAB 1 - DOCUMENT SCAN
+# TAB 1
 # =====================================================
 
 with tab1:
@@ -143,34 +138,34 @@ OCR TEXT:
 {extracted_text}
 """
 
-# ---------------- MODEL ROTATION ----------------
-FAST_MODEL = "gemini-pro"
-report_text = None
+                    # ---------------- GEMINI EXECUTION ----------------
+                    MODEL_NAME = "gemini-pro"
+                    report_text = None
 
-for api_key in API_KEYS:
-    try:
-        genai.configure(api_key=api_key)
+                    for api_key in API_KEYS:
+                        try:
+                            genai.configure(api_key=api_key)
+                            model = genai.GenerativeModel(MODEL_NAME)
 
-        model = genai.GenerativeModel(FAST_MODEL)
+                            response = model.generate_content(prompt)
+                            report_text = response.text
 
-        response = model.generate_content(prompt)
-        report_text = response.text
+                            st.success("✅ Success")
+                            break
 
-        st.success("✅ Success")
-        break
+                        except Exception as api_error:
+                            error_str = str(api_error)
 
-    except Exception as api_error:
-        error_str = str(api_error)
+                            if "429" in error_str or "503" in error_str:
+                                st.warning("Rate limited. Switching key...")
+                                time.sleep(2)
+                            else:
+                                st.error(f"API Error: {api_error}")
+                                break
 
-        if "429" in error_str or "503" in error_str:
-            st.warning("Rate limited. Switching API key...")
-            time.sleep(2)
-        else:
-            st.error(f"API Error: {api_error}")
-            break
-
-if not report_text:
-    st.error("❌ All API keys exhausted.")
+                    if not report_text:
+                        st.error("❌ All API keys exhausted.")
+                        st.stop()
 
                     # ---------------- SAVE TO FIREBASE ----------------
                     if db:
@@ -190,7 +185,7 @@ if not report_text:
                     with st.expander("📄 Raw OCR Text"):
                         st.write(extracted_text)
 
-                    # ---------------- PDF DOWNLOAD ----------------
+                    # ---------------- PDF ----------------
                     pdf_data = create_pdf(report_text)
 
                     st.download_button(
@@ -218,7 +213,6 @@ with tab2:
             )
 
             count = 0
-
             for scan in scans:
                 count += 1
                 data = scan.to_dict()
@@ -246,6 +240,4 @@ with tab2:
 # =====================================================
 
 st.markdown("---")
-st.caption("Powered by Turaab Vision | Production Stable Edition")
-
-
+st.caption("Powered by Turaab Vision 2.0 | Production Stable Edition")
