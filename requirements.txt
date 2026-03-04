@@ -1,7 +1,8 @@
 streamlit
 easyocr
-google-genai
-pillow
-fpdf
-pandas
+google-generativeai
 firebase-admin
+fpdf
+Pillow
+numpy
+
