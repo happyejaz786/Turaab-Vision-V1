@@ -41,14 +41,23 @@ except Exception:
     db = None
 
 # --- GEMINI API SETUP (Smart Rotator) ---
+# --- GEMINI API & MODEL SETUP (Gen-Z Speed Rotator) ---
 try:
-    # Secrets se 4 API keys ki list utha rahe hain
     API_KEYS = st.secrets["gemini"]["api_keys"]
-    # Har scan par ek random key use hogi taaki limit cross na ho
     CURRENT_API_KEY = random.choice(API_KEYS) 
-except Exception as e:
-    st.error("API Keys load nahi ho saki. Kripya Secrets check karein.")
+    
+    # Gen-Z Fast Models Pool (Sirf sabse tez models)
+    FAST_MODELS = [
+        "gemini-2.5-flash-lite", 
+        "gemini-flash-latest",
+        "gemini-2.0-flash-lite"
+    ]
+    CURRENT_MODEL = random.choice(FAST_MODELS)
+    
+except Exception:
     CURRENT_API_KEY = None
+    CURRENT_MODEL = None
+    st.error("API Keys missing in Streamlit Secrets!")
 
 # --- FUNCTIONS ---
 @st.cache_resource
@@ -104,10 +113,12 @@ with tab1:
                         """
                         
                         client = genai.Client(api_key=CURRENT_API_KEY)
-                        response = client.models.generate_content(
-                            model="gemini-2.5-flash-lite", 
-                            contents=[prompt, img]
-                        )
+                    
+                    # Ab code khud har baar naya aur fast model use karega
+                    response = client.models.generate_content(
+                        model=CURRENT_MODEL, 
+                        contents=[prompt, img]
+                    )
                         report_text = response.text
                         
                         # 3. Save to Firebase
@@ -148,6 +159,7 @@ with tab2:
             
 st.markdown("---")
 st.caption("Powered by Turaab Vision | Version 2.0")
+
 
 
 
