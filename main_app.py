@@ -19,13 +19,18 @@ st.set_page_config(page_title="Turaab Vision V1.2", page_icon="📄", layout="wi
 # --- FIREBASE SETUP ---
 if not firebase_admin._apps:
     try:
-        # Streamlit secrets se JSON load kar rahe hain
-        service_account_info = json.loads(st.secrets["firebase"]["service_account"])
-        cred = credentials.Certificate(service_account_info)
+        # Secrets se JSON string utha kar dictionary mein badalna
+        info = json.loads(st.secrets["firebase"]["service_account"])
+        
+        # PEM file newline character fix
+        if "private_key" in info:
+            info["private_key"] = info["private_key"].replace("\\n", "\n")
+            
+        cred = credentials.Certificate(info)
         firebase_admin.initialize_app(cred)
     except Exception as e:
         st.error(f"Firebase Init Error: {e}")
-
+# --- FIREBASE SETUP ---
 db = firestore.client()
 
 # API Keys
@@ -94,3 +99,4 @@ with tab2:
         data = scan.to_dict()
         with st.expander(f"Scan - {data['timestamp'].strftime('%H:%M %d/%m')}"):
             st.markdown(data['summary'])
+
