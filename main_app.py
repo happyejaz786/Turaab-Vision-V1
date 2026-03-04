@@ -8,10 +8,9 @@ import json
 import firebase_admin
 from firebase_admin import credentials, firestore
 from fpdf import FPDF
-import pandas as pd
 from datetime import datetime
 
-# SSL Fix
+# SSL Fix for models download
 ssl._create_default_https_context = ssl._create_unverified_context
 
 # --- CONFIGURATION ---
@@ -19,9 +18,12 @@ st.set_page_config(page_title="Turaab Vision V1.2", page_icon="📄", layout="wi
 
 # --- FIREBASE SETUP (Using Secrets) ---
 if not firebase_admin._apps:
-    secret_json = json.loads(st.secrets["firebase"]["service_account"])
-    cred = credentials.Certificate(secret_json)
-    firebase_admin.initialize_app(cred)
+    try:
+        secret_json = json.loads(st.secrets["firebase"]["service_account"])
+        cred = credentials.Certificate(secret_json)
+        firebase_admin.initialize_app(cred)
+    except Exception as e:
+        st.error(f"Firebase connection fail: {e}")
 
 db = firestore.client()
 
@@ -44,68 +46,95 @@ def create_pdf(text_content):
     pdf.set_font("Arial", size=12)
     pdf.cell(200, 10, txt="Turaab Vision - Analytical Report", ln=1, align='C')
     pdf.ln(10)
-    # Cleaning text for FPDF (replaces non-latin chars if any)
-    pdf.multi_cell(0, 10, txt=text_content.encode('latin-1', 'ignore').decode('latin-1'))
+    
+    # PDF Cleaning: Special symbols handling
+    clean_text = text_content.replace('₹', 'Rs.').replace('*', '')
+    # Encoding fix for FPDF
+    safe_text = clean_text.encode('latin-1', 'ignore').decode('latin-1')
+    
+    pdf.multi_cell(0, 10, txt=safe_text)
     return pdf.output(dest='S').encode('latin-1')
 
 # --- UI DESIGN ---
 st.title("📄 Turaab Vision - Version 1.2")
 st.write("Bismillah_Arrahman_Arraheem")
 
-tab1, tab2 = st.tabs(["🔍 Scan New Document", "📜 History"])
+tab1, tab2 = st.tabs(["🔍 Scan & Analyze", "📜 History"])
 
 with tab1:
-    source = st.radio("Photo Kaise Lein?", ("Camera (Mobile/Webcam)", "Upload File (Gallery)"))
-    uploaded_file = st.camera_input("Photo kheenchiye") if source == "Camera (Mobile/Webcam)" else st.file_uploader("Upload karein", type=['jpg', 'jpeg', 'png'])
+    source = st.radio("Photo Source:", ("Camera (Mobile/Webcam)", "Upload File (Gallery)"))
+    if source == "Camera (Mobile/Webcam)":
+        uploaded_file = st.camera_input("Document Scan Karein")
+    else:
+        uploaded_file = st.file_uploader("Document Upload Karein", type=['jpg', 'jpeg', 'png'])
 
     if uploaded_file:
         img = Image.open(uploaded_file)
-        st.image(img, width=400)
+        st.image(img, width=400, caption="Uploaded Document")
         
-        if st.button("🚀 Analyze & Save"):
-            with st.spinner("AI Kaam kar raha hai..."):
-                # 1. OCR
-                reader = load_ocr_reader()
-                img_array = np.array(img)
-                extracted_text = " ".join(reader.readtext(img_array, detail=0))
-
-                # 2. Gemini Analysis
-                prompt = f"Identify document type, 2-line summary, and key data in a Table. OCR: {extracted_text}"
-                client = genai.Client(api_key=API_KEYS[0])
-                response = client.models.generate_content(model="gemini-3-flash-preview", contents=[prompt, img])
-                report_text = response.text
-
-                # 3. Save to Firebase
-                doc_ref = db.collection('scans').document()
-                doc_ref.set({
-                    'timestamp': datetime.now(),
-                    'summary': report_text,
-                    'raw_text': extracted_text
-                })
-
-               # --- OUTPUT SECTION ---
-                st.success("✅ Analysis Complete & Saved to Firebase!")
-                st.markdown(report_text)
-                
-                # --- PDF GENERATION (Ye button tabhi dikhega jab report generate hogi) ---
+        if st.button("🚀 Process Document"):
+            with st.spinner("Turaab Vision AI analysis kar raha hai..."):
                 try:
-                    pdf_bytes = create_pdf(report_text)
-                    st.download_button(
-                        label="📥 Download Report (PDF)",
-                        data=pdf_bytes,
-                        file_name=f"Turaab_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
-                        mime="application/pdf",
-                        key="pdf_download_btn"
+                    # 1. OCR Section
+                    reader = load_ocr_reader()
+                    img_array = np.array(img)
+                    ocr_res = reader.readtext(img_array, detail=0)
+                    extracted_text = " ".join(ocr_res)
+
+                    # 2. Gemini AI Section
+                    prompt = f"""
+                    Role: Professional CSC Document Summarizer.
+                    Task: Summarize document type and key info into a table.
+                    OCR Data: {extracted_text}
+                    """
+                    client = genai.Client(api_key=API_KEYS[0])
+                    response = client.models.generate_content(
+                        model="gemini-2.0-flash", # Latest Fast Model
+                        contents=[prompt, img]
                     )
-                except Exception as pdf_err:
-                    st.warning(f"PDF generate karne mein thodi dikkat hui: {pdf_err}")
+                    report_text = response.text
+
+                    # 3. Save to Firebase
+                    doc_ref = db.collection('scans').document()
+                    doc_ref.set({
+                        'timestamp': datetime.now(),
+                        'summary': report_text,
+                        'source': source
+                    })
+
+                    # 4. Results Display
+                    st.success("✅ Analysis Complete & Saved to History!")
+                    st.markdown(report_text)
+                    
+                    # 5. PDF Download Button (Indented correctly inside button)
+                    st.markdown("---")
+                    pdf_data = create_pdf(report_text)
+                    st.download_button(
+                        label="📥 Download Report as PDF",
+                        data=pdf_data,
+                        file_name=f"Turaab_Vision_{datetime.now().strftime('%d%m_%H%M')}.pdf",
+                        mime="application/pdf",
+                        key="main_download"
+                    )
+
+                except Exception as err:
+                    st.error(f"Kuch galti hui: {err}")
 
 with tab2:
-    st.subheader("Pichle Scans (History)")
-    scans = db.collection('scans').order_by('timestamp', direction=firestore.Query.DESCENDING).limit(10).stream()
-    
-    for scan in scans:
-        data = scan.to_dict()
-        with st.expander(f"Scan - {data['timestamp'].strftime('%Y-%m-%d %H:%M')}"):
-            st.markdown(data['summary'])
+    st.subheader("📜 Recent Scans")
+    try:
+        scans = db.collection('scans').order_by('timestamp', direction=firestore.Query.DESCENDING).limit(10).stream()
+        
+        for scan in scans:
+            data = scan.to_dict()
+            with st.expander(f"Scan - {data['timestamp'].strftime('%d %b, %H:%M')}"):
+                st.markdown(data['summary'])
+                # History mein bhi PDF download option
+                if st.button("Generate PDF", key=scan.id):
+                    pdf_history = create_pdf(data['summary'])
+                    st.download_button("Download Now", data=pdf_history, file_name="History_Report.pdf")
+    except Exception as e:
+        st.info("Abhi koi history nahi hai. Pehla scan karein!")
 
+st.markdown("---")
+st.caption("Developed for Mohammed Turab Khan | CSC Automation Tool")
