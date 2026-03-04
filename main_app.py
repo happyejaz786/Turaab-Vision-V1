@@ -114,11 +114,11 @@ with tab1:
                         
                         client = genai.Client(api_key=CURRENT_API_KEY)
                     
-                    # Ab code khud har baar naya aur fast model use karega
-                    response = client.models.generate_content(
-                        model=CURRENT_MODEL, 
-                        contents=[prompt, img]
-                    )
+                        # Ab code khud har baar naya aur fast model use karega
+                        response = client.models.generate_content(
+                            model=CURRENT_MODEL, 
+                            contents=[prompt, img]
+                        )
                         report_text = response.text
                         
                         # 3. Save to Firebase
@@ -159,6 +159,7 @@ with tab2:
             
 st.markdown("---")
 st.caption("Powered by Turaab Vision | Version 2.0")
+
 
 
 
