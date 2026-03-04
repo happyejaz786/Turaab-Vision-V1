@@ -105,7 +105,7 @@ with tab1:
                         
                         client = genai.Client(api_key=CURRENT_API_KEY)
                         response = client.models.generate_content(
-                            model="gemini-1.5-flash-latest", 
+                            model="gemini-flash-latest", 
                             contents=[prompt, img]
                         )
                         report_text = response.text
@@ -148,5 +148,6 @@ with tab2:
             
 st.markdown("---")
 st.caption("Powered by Turaab Vision | Version 2.0")
+
 
 
