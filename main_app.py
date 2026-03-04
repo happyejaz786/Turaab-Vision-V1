@@ -155,7 +155,8 @@ OCR TEXT:
                         for api_key in API_KEYS:
                             try:
                                 genai.configure(api_key=api_key)
-                                model = genai.GenerativeModel(model_name)
+                                model = genai.GenerativeModel("gemini-pro")
+                                #model = genai.GenerativeModel(model_name)
 
                                 response = model.generate_content(prompt)
                                 report_text = response.text
@@ -259,3 +260,4 @@ with tab2:
 
 st.markdown("---")
 st.caption("Powered by Turaab Vision | Production Stable Edition")
+
