@@ -1,116 +1,240 @@
 import streamlit as st
 import easyocr
-from google import genai
+import google.generativeai as genai
 from PIL import Image
 import numpy as np
 import ssl
 import random
 import time
-from fpdf import FPDF
-from datetime import datetime
 import firebase_admin
 from firebase_admin import credentials, firestore
+from fpdf import FPDF
+from datetime import datetime
 
-# SSL Fix
+# SSL Fix (for model download environments)
 ssl._create_default_https_context = ssl._create_unverified_context
 
-st.set_page_config(page_title="Turaab Vision V2.0", page_icon="📄", layout="centered")
-st.markdown("<h2 style='text-align: center; color: #4CAF50;'>بِسْمِ ٱللَّٰهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ</h2>", unsafe_allow_html=True)
-st.title("📄 Turaab Vision - V2.0 (Lite & Fast)")
+# ------------------ CONFIG ------------------
+st.set_page_config(
+    page_title="Turaab Vision V2.0",
+    page_icon="📄",
+    layout="wide"
+)
 
-# --- FIREBASE SETUP ---
+st.markdown(
+    "<h2 style='text-align: center; color: #4CAF50;'>"
+    "بِسْمِ ٱللَّٰهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ</h2>",
+    unsafe_allow_html=True
+)
+
+st.title("📄 Turaab Vision - Version 2.0 (Stable Edition)")
+
+# ------------------ FIREBASE SETUP ------------------
 db = None
 try:
     if not firebase_admin._apps:
         firebase_creds = dict(st.secrets["firebase"])
+
         if "private_key" in firebase_creds:
             firebase_creds["private_key"] = firebase_creds["private_key"].replace("\\n", "\n")
+
         cred = credentials.Certificate(firebase_creds)
         firebase_admin.initialize_app(cred)
-    db = firestore.client()
-except Exception:
-    st.warning("⚠️ Firebase connect nahi hua, par app chalti rahegi.")
 
-# --- GEMINI SETUP ---
+    db = firestore.client()
+
+except Exception as e:
+    st.warning(
+        "⚠️ Firebase connect nahi ho saka. History save nahi hogi.\nError: " + str(e)
+    )
+
+# ------------------ GEMINI SETUP ------------------
+CURRENT_API_KEY = None
+
 try:
     API_KEYS = st.secrets["gemini"]["api_keys"]
-    CURRENT_API_KEY = random.choice(API_KEYS) 
-except Exception:
-    CURRENT_API_KEY = None
-    st.error("API Keys missing in Streamlit Secrets!")
+    CURRENT_API_KEY = random.choice(API_KEYS)
+    genai.configure(api_key=CURRENT_API_KEY)
 
-# Memory-Safe OCR Loading
+except Exception:
+    st.error("❌ Gemini API Keys missing in Streamlit Secrets!")
+
+# ------------------ OCR CACHE ------------------
 @st.cache_resource
 def load_ocr_reader():
-    return easyocr.Reader(['en', 'hi'], gpu=False)
+    return easyocr.Reader(['hi', 'en'], gpu=False)
 
+# ------------------ PDF FUNCTION ------------------
 def create_pdf(text_content):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", size=12)
+
     pdf.cell(200, 10, txt="Turaab Vision - Mission Summary", ln=1, align='C')
     pdf.ln(10)
-    clean_text = text_content.replace('₹', 'Rs.').replace('*', '')
+
+    clean_text = text_content.replace('₹', 'Rs.')
     safe_text = clean_text.encode('latin-1', 'ignore').decode('latin-1')
-    pdf.multi_cell(0, 10, txt=safe_text)
+
+    pdf.multi_cell(0, 8, txt=safe_text)
+
     return pdf.output(dest='S').encode('latin-1')
 
-# --- UI ---
-uploaded_file = st.file_uploader("Upload Document Image", type=['jpg', 'jpeg', 'png'])
+# ------------------ MODELS ------------------
+FAST_MODELS = [
+    "gemini-1.5-flash",
+    "gemini-1.5-pro"
+]
 
-if uploaded_file:
-    img = Image.open(uploaded_file)
-    st.image(img, width=400)
-    
-    if st.button("🚀 Process Document"):
-        if not CURRENT_API_KEY:
-            st.error("API Key missing hai.")
-        else:
-            with st.spinner("AI Analysis chal raha hai... (Thoda sabr karein)"):
+# ------------------ UI ------------------
+tab1, tab2 = st.tabs(["🔍 Scan Document", "📜 History"])
+
+# ====================================================
+# TAB 1
+# ====================================================
+with tab1:
+
+    uploaded_file = st.file_uploader(
+        "Upload Document Image (JPG, PNG)",
+        type=['jpg', 'jpeg', 'png']
+    )
+
+    if uploaded_file:
+        img = Image.open(uploaded_file)
+        st.image(img, width=400, caption="Uploaded Image")
+
+        if st.button("🚀 Process & Save"):
+
+            if not CURRENT_API_KEY:
+                st.error("API Key missing hai. Process nahi ho sakta.")
+                st.stop()
+
+            with st.spinner("AI Analysis chal raha hai..."):
+
                 try:
+                    # -------- 1. OCR --------
                     reader = load_ocr_reader()
                     img_array = np.array(img)
                     ocr_result = reader.readtext(img_array, detail=0)
                     extracted_text = " ".join(ocr_result)
-                    
+
+                    if not extracted_text.strip():
+                        st.error("OCR koi text detect nahi kar paya.")
+                        st.stop()
+
+                    # -------- 2. PROMPT --------
                     prompt = f"""
-                    System Role: Professional Educator.
-                    Task: Decode OCR and summarize.
-                    1. Identify Topic.
-                    2. Provide Summary.
-                    3. Key Points.
-                    OCR RAW: {extracted_text}
-                    """
-                    
-                    client = genai.Client(api_key=CURRENT_API_KEY)
-                    FAST_MODELS = ["gemini-2.5-flash-lite", "gemini-flash-latest", "gemini-2.0-flash-lite"]
-                    
+You are a Professional Educator and Analytical Summarizer.
+
+Your task:
+1. Identify the document/topic type.
+2. Provide a detailed executive summary.
+3. Extract key points in simple bullet format.
+4. Make explanation student friendly.
+
+OCR TEXT:
+{extracted_text}
+"""
+
+                    # -------- 3. GEMINI RETRY --------
                     report_text = None
+
                     for attempt, model_name in enumerate(FAST_MODELS):
                         try:
-                            response = client.models.generate_content(model=model_name, contents=[prompt, img])
+                            model = genai.GenerativeModel(model_name)
+
+                            response = model.generate_content(prompt)
+
                             report_text = response.text
-                            st.success(f"✅ Analysis Complete! (Model: {model_name})")
+
+                            st.success(f"✅ Analysis Complete (Model: {model_name})")
                             break
-                        except Exception as e:
-                            if "503" in str(e) or "429" in str(e):
-                                if attempt < len(FAST_MODELS) - 1:
-                                    st.warning(f"⚠️ {model_name} busy. Switching model...")
-                                    time.sleep(2)
-                                else:
-                                    st.error("❌ Servers busy hain. Thodi der baad try karein.")
+
+                        except Exception as api_error:
+                            if attempt < len(FAST_MODELS) - 1:
+                                st.warning(
+                                    f"{model_name} busy. Switching model..."
+                                )
+                                time.sleep(2)
                             else:
-                                st.error(f"Error: {e}")
-                                break
-                    
+                                st.error(
+                                    "❌ All Gemini models busy. Try again later."
+                                )
+
+                    # -------- 4. OUTPUT --------
                     if report_text:
-                        if db is not None:
+
+                        # Save to Firebase
+                        if db:
                             try:
-                                db.collection('scans').add({'timestamp': datetime.now(), 'summary': report_text})
-                            except:
-                                pass
-                        
+                                db.collection('scans').add({
+                                    'timestamp': firestore.SERVER_TIMESTAMP,
+                                    'summary': report_text
+                                })
+                                st.toast("History Saved!", icon="💾")
+
+                            except Exception as fb_error:
+                                st.warning(
+                                    f"Firebase save failed: {fb_error}"
+                                )
+
+                        st.subheader("💡 Mission Summary Report")
                         st.markdown(report_text)
-                        st.download_button(label="📥 Download PDF", data=create_pdf(report_text), file_name="Turaab_Report.pdf")
-                except Exception as err:
-                    st.error(f"System Error: {err}")
+
+                        with st.expander("📄 Raw OCR Text"):
+                            st.write(extracted_text)
+
+                        # PDF Download
+                        pdf_data = create_pdf(report_text)
+
+                        st.download_button(
+                            label="📥 Download PDF",
+                            data=pdf_data,
+                            file_name=f"Turaab_Report_{datetime.now().strftime('%H%M%S')}.pdf"
+                        )
+
+                except Exception as e:
+                    st.error(f"System Error: {e}")
+
+# ====================================================
+# TAB 2 - HISTORY
+# ====================================================
+with tab2:
+
+    if db:
+        try:
+            scans = (
+                db.collection('scans')
+                .order_by('timestamp', direction=firestore.Query.DESCENDING)
+                .limit(10)
+                .stream()
+            )
+
+            count = 0
+
+            for scan in scans:
+                count += 1
+                data = scan.to_dict()
+
+                timestamp = data.get('timestamp')
+
+                if timestamp:
+                    time_display = timestamp.strftime('%d %b, %H:%M')
+                else:
+                    time_display = "Unknown Time"
+
+                with st.expander(f"Scan - {time_display}"):
+                    st.markdown(data.get('summary', 'No summary found'))
+
+            if count == 0:
+                st.info("Abhi history khali hai.")
+
+        except Exception as e:
+            st.error(f"History load error: {e}")
+
+    else:
+        st.info("Database connected nahi hai.")
+
+# ------------------ FOOTER ------------------
+st.markdown("---")
+st.caption("Powered by Turaab Vision 2.0 | Stable Production Edition")
