@@ -16,6 +16,10 @@ ssl._create_default_https_context = ssl._create_unverified_context
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Turaab Vision V2.0", page_icon="📄", layout="wide")
 
+# --- ARABIC BISMILLAH & TITLE ---
+st.markdown("<h2 style='text-align: center; color: #4CAF50;'>بِسْمِ ٱللَّٰهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ</h2>", unsafe_allow_html=True)
+st.title("📄 Turaab Vision - Version 2.0")
+
 # --- SECRETS LOAD & FIREBASE SETUP ---
 if not firebase_admin._apps:
     try:
@@ -66,15 +70,11 @@ def create_pdf(text_content):
     return pdf.output(dest='S').encode('latin-1')
 
 # --- UI DESIGN ---
-st.title("📄 Turaab Vision - Version 2.0")
-st.write("Bismillah_Arrahman_Arraheem")
-
 tab1, tab2 = st.tabs(["🔍 Scan Document", "📜 History"])
 
 with tab1:
-    uploaded_file = st.file_uploader("Upload Document", type=['jpg', 'jpeg', 'png'])
-    if not uploaded_file:
-        uploaded_file = st.camera_input("Photo Lein")
+    # Camera option removed. Only File Uploader remains.
+    uploaded_file = st.file_uploader("Upload Document Image (JPG, PNG)", type=['jpg', 'jpeg', 'png'])
 
     if uploaded_file:
         img = Image.open(uploaded_file)
