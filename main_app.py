@@ -4,12 +4,26 @@ from google import genai
 from PIL import Image
 import numpy as np
 import ssl
+import json
+import firebase_admin
+from firebase_admin import credentials, firestore
+from fpdf import FPDF
+import pandas as pd
+from datetime import datetime
 
-# SSL Fix for models download
+# SSL Fix
 ssl._create_default_https_context = ssl._create_unverified_context
 
 # --- CONFIGURATION ---
-st.set_page_config(page_title="Turaab Vision V1.0", page_icon="📄", layout="centered")
+st.set_page_config(page_title="Turaab Vision V1.2", page_icon="📄", layout="wide")
+
+# --- FIREBASE SETUP (Using Secrets) ---
+if not firebase_admin._apps:
+    secret_json = json.loads(st.secrets["firebase"]["service_account"])
+    cred = credentials.Certificate(secret_json)
+    firebase_admin.initialize_app(cred)
+
+db = firestore.client()
 
 # API Keys List
 API_KEYS = [
@@ -19,68 +33,68 @@ API_KEYS = [
     "AIzaSyCl5SZGRIsk8-3DAiXsuslkCf--s4HtpeQ"
 ]
 
-# --- CACHING MODELS (Speed Boost for i3/i7) ---
+# --- FUNCTIONS ---
 @st.cache_resource
 def load_ocr_reader():
     return easyocr.Reader(['hi', 'en'], gpu=False)
 
-def get_gemini_client(key_index):
-    return genai.Client(api_key=API_KEYS[key_index])
+def create_pdf(text_content):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", size=12)
+    pdf.cell(200, 10, txt="Turaab Vision - Analytical Report", ln=1, align='C')
+    pdf.ln(10)
+    # Cleaning text for FPDF (replaces non-latin chars if any)
+    pdf.multi_cell(0, 10, txt=text_content.encode('latin-1', 'ignore').decode('latin-1'))
+    return pdf.output(dest='S').encode('latin-1')
 
 # --- UI DESIGN ---
-st.title("📄 Turaab Vision - Version 1.0")
+st.title("📄 Turaab Vision - Version 1.2")
 st.write("Bismillah_Arrahman_Arraheem")
-st.markdown("---")
 
-# Input Options: Camera or Upload
-source = st.radio("Photo Kaise Lein?", ("Camera (Mobile/Webcam)", "Upload File (Gallery)"))
+tab1, tab2 = st.tabs(["🔍 Scan New Document", "📜 History"])
 
-if source == "Camera (Mobile/Webcam)":
-    uploaded_file = st.camera_input("Document ki photo kheenchiye")
-else:
-    uploaded_file = st.file_uploader("Document upload karein", type=['jpg', 'jpeg', 'png'])
+with tab1:
+    source = st.radio("Photo Kaise Lein?", ("Camera (Mobile/Webcam)", "Upload File (Gallery)"))
+    uploaded_file = st.camera_input("Photo kheenchiye") if source == "Camera (Mobile/Webcam)" else st.file_uploader("Upload karein", type=['jpg', 'jpeg', 'png'])
 
-# --- LOGIC ---
-if uploaded_file:
-    img = Image.open(uploaded_file)
-    st.image(img, caption="Document Process ho raha hai...", use_container_width=True)
-    
-    if st.button("🚀 Start Digitization & Summary"):
-        with st.spinner("🔍 OCR Scanning & AI Analysis in progress..."):
-            try:
-                # 1. OCR Section
+    if uploaded_file:
+        img = Image.open(uploaded_file)
+        st.image(img, width=400)
+        
+        if st.button("🚀 Analyze & Save"):
+            with st.spinner("AI Kaam kar raha hai..."):
+                # 1. OCR
                 reader = load_ocr_reader()
                 img_array = np.array(img)
-                ocr_result = reader.readtext(img_array, detail=0)
-                extracted_text = " ".join(ocr_result)
+                extracted_text = " ".join(reader.readtext(img_array, detail=0))
 
-                # 2. Gemini Analysis (Mission Summary)
-                prompt = f"""
-                System Role: Professional CSC Expert & Analytical Summarizer.
-                Task: Decode Krutidev/Legacy symbols from OCR and summarize.
-                1. Identify Document Type.
-                2. Provide 2-line Executive Summary.
-                3. Extract Key Details in a Table (Name, ID, Address, Mobile).
+                # 2. Gemini Analysis
+                prompt = f"Identify document type, 2-line summary, and key data in a Table. OCR: {extracted_text}"
+                client = genai.Client(api_key=API_KEYS[0])
+                response = client.models.generate_content(model="gemini-3-flash-preview", contents=[prompt, img])
+                report_text = response.text
+
+                # 3. Save to Firebase
+                doc_ref = db.collection('scans').document()
+                doc_ref.set({
+                    'timestamp': datetime.now(),
+                    'summary': report_text,
+                    'raw_text': extracted_text
+                })
+
+                st.success("✅ Saved to Firebase History!")
+                st.markdown(report_text)
                 
-                OCR RAW: {extracted_text}
-                """
-                
-                client = get_gemini_client(0) # Pehli key use kar rahe hain
-                response = client.models.generate_content(
-                    model="gemini-3-flash-preview",
-                    contents=[prompt, img]
-                )
+                # 4. PDF Download
+                pdf_bytes = create_pdf(report_text)
+                st.download_button("📥 Download Report (PDF)", data=pdf_bytes, file_name="Turaab_Report.pdf", mime="application/pdf")
 
-                # --- OUTPUT ---
-                st.success("✅ Analysis Complete!")
-                st.subheader("💡 Mission Summary Report")
-                st.markdown(response.text)
-                
-                with st.expander("See Raw Extracted Text"):
-                    st.write(extracted_text)
-
-            except Exception as e:
-                st.error(f"Error: {e}")
-
-st.markdown("---")
-st.caption("Powered by Turaab Vision | Version 1.0 (Beta)")
+with tab2:
+    st.subheader("Pichle Scans (History)")
+    scans = db.collection('scans').order_by('timestamp', direction=firestore.Query.DESCENDING).limit(10).stream()
+    
+    for scan in scans:
+        data = scan.to_dict()
+        with st.expander(f"Scan - {data['timestamp'].strftime('%Y-%m-%d %H:%M')}"):
+            st.markdown(data['summary'])
