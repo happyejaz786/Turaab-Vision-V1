@@ -83,12 +83,22 @@ with tab1:
                     'raw_text': extracted_text
                 })
 
-                st.success("✅ Saved to Firebase History!")
+               # --- OUTPUT SECTION ---
+                st.success("✅ Analysis Complete & Saved to Firebase!")
                 st.markdown(report_text)
                 
-                # 4. PDF Download
-                pdf_bytes = create_pdf(report_text)
-                st.download_button("📥 Download Report (PDF)", data=pdf_bytes, file_name="Turaab_Report.pdf", mime="application/pdf")
+                # --- PDF GENERATION (Ye button tabhi dikhega jab report generate hogi) ---
+                try:
+                    pdf_bytes = create_pdf(report_text)
+                    st.download_button(
+                        label="📥 Download Report (PDF)",
+                        data=pdf_bytes,
+                        file_name=f"Turaab_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                        mime="application/pdf",
+                        key="pdf_download_btn"
+                    )
+                except Exception as pdf_err:
+                    st.warning(f"PDF generate karne mein thodi dikkat hui: {pdf_err}")
 
 with tab2:
     st.subheader("Pichle Scans (History)")
@@ -98,3 +108,4 @@ with tab2:
         data = scan.to_dict()
         with st.expander(f"Scan - {data['timestamp'].strftime('%Y-%m-%d %H:%M')}"):
             st.markdown(data['summary'])
+
