@@ -1,11 +1,7 @@
 streamlit
-easyocr
 google-genai
 firebase-admin
 fpdf
 Pillow
-numpy
-psutil
-pyautogui
-PyGetWindow
 edge-tts
+psutil
