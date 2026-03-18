@@ -1,6 +1,6 @@
 streamlit
 easyocr
-google-generativeai
+google-genai
 firebase-admin
 fpdf
 Pillow
