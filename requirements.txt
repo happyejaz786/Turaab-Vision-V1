@@ -5,3 +5,6 @@ firebase-admin
 fpdf
 Pillow
 numpy
+psutil
+pyautogui
+PyGetWindow
