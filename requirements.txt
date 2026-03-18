@@ -8,3 +8,4 @@ numpy
 psutil
 pyautogui
 PyGetWindow
+edge-tts
