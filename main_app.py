@@ -1,155 +1,220 @@
 import streamlit as st
-import easyocr
-import google.generativeai as genai
+from google import genai
 from PIL import Image
-import numpy as np
-import ssl
+import os
+import asyncio
+import edge_tts
+import json
 import random
 import time
-from fpdf import FPDF
-from datetime import datetime
-import firebase_admin
-from firebase_admin import credentials, firestore
+from file_engine import TuraabFileEngine
+import turaab_actions
 
-# SSL Fix for models download
-ssl._create_default_https_context = ssl._create_unverified_context
+# --- 1. INITIALIZE ENGINES ---
+engine = TuraabFileEngine()
 
-# --- CONFIGURATION ---
-st.set_page_config(page_title="Turaab Vision V2.0", page_icon="📄", layout="centered")
+# --- 2. SESSION STATE ---
+if 'rep' not in st.session_state: st.session_state.rep = None
+if 'final_trans' not in st.session_state: st.session_state.final_trans = None
+if 'audio_stream' not in st.session_state: st.session_state.audio_stream = None
+if 'play_request' not in st.session_state: st.session_state.play_request = False
 
-# --- ARABIC BISMILLAH & TITLE ---
-st.markdown("<h2 style='text-align: center; color: #4CAF50;'>بِسْمِ ٱللَّٰهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ</h2>", unsafe_allow_html=True)
-st.title("📄 Turaab Vision - V2.0 (Stable & Fast)")
-
-# --- FIREBASE SETUP ---
-db = None
-try:
-    if not firebase_admin._apps:
-        firebase_creds = dict(st.secrets["firebase"])
-        if "private_key" in firebase_creds:
-            firebase_creds["private_key"] = firebase_creds["private_key"].replace("\\n", "\n")
-        cred = credentials.Certificate(firebase_creds)
-        firebase_admin.initialize_app(cred)
-    db = firestore.client()
-except Exception:
-    st.warning("⚠️ Firebase connect nahi hua, par app chalti rahegi.")
-
-# --- GEMINI STABLE API SETUP ---
-try:
-    API_KEYS = st.secrets["gemini"]["api_keys"]
-    CURRENT_API_KEY = random.choice(API_KEYS)
-    # Sahi aur Stable API Configuration
-    if CURRENT_API_KEY:
-        genai.configure(api_key=CURRENT_API_KEY)
-except Exception:
-    CURRENT_API_KEY = None
-    st.error("API Keys missing in Streamlit Secrets!")
-
-# --- FUNCTIONS ---
-@st.cache_resource
-def load_ocr_reader():
-    # Memory safe OCR loading
-    return easyocr.Reader(['en', 'hi'], gpu=False)
-
-def create_pdf(text_content):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", size=12)
-    pdf.cell(200, 10, txt="Turaab Vision - Mission Summary", ln=1, align='C')
-    pdf.ln(10)
+# --- 3. FUNCTION: BUG-FREE MEMORY MANAGER ---
+def manage_history(key, data=None, mode="read"):
+    db_path = "history.json"
+    history = {}
+    if os.path.exists(db_path):
+        with open(db_path, "r") as f:
+            try: history = json.load(f)
+            except: history = {}
     
-    clean_text = text_content.replace('₹', 'Rs.').replace('*', '')
-    safe_text = clean_text.encode('latin-1', 'ignore').decode('latin-1')
-    
-    pdf.multi_cell(0, 10, txt=safe_text)
-    return pdf.output(dest='S').encode('latin-1')
+    if mode == "write":
+        # SAFETY LOCK: Kabhi error ko memory mein save mat karo!
+        if data and "Error" not in data and "RESOURCE_EXHAUSTED" not in data:
+            history[key] = data
+            with open(db_path, "w") as f: json.dump(history, f)
+            return True
+        return False
+    return history.get(key)
 
-# --- MAIN UI ---
-uploaded_file = st.file_uploader("Upload Document Image (JPG, PNG)", type=['jpg', 'jpeg', 'png'])
+# --- 4. FUNCTION: SPEECH ENGINE ---
+async def generate_voice_output(text, lang_code="English"):
+    prefix = "Bismillah hir Rahman nir Raheem. Assalaatu wassaalaamu alaika ya rasool Allah."
+    full_message = f"{prefix} {text}"
+    voices = {"Urdu": "ur-PK-UzmaNeural", "Hindi": "hi-IN-MadhurNeural", "English": "en-US-GuyNeural"}
+    voice = voices.get(lang_code, "en-US-GuyNeural")
+    try:
+        communicate = edge_tts.Communicate(full_message, voice)
+        audio_data = b""
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio": audio_data += chunk["data"]
+        return audio_data
+    except: return None
 
-if uploaded_file:
-    img = Image.open(uploaded_file)
-    st.image(img, width=400)
-    
-    if st.button("🚀 Process Document"):
-        if not CURRENT_API_KEY:
-            st.error("API Key missing hai, process aage nahi badh sakta.")
-        else:
-            with st.spinner("AI Analysis chal raha hai... (Stable Mode)"):
+# --- 5. FUNCTION: ULTIMATE AI CORE (Dual-Model Rescue) ---
+def ai_smart_engine(prompt, image=None):
+    try:
+        api_keys = st.secrets["gemini"]["api_keys"]
+    except: return "System Error: API Keys missing in secrets.toml"
+
+    # Agar 2.0 limit zero (0) de raha hai, toh 2.5 par auto-shift ho jayega
+    rescue_models = ["gemini-2.0-flash", "gemini-2.5-flash", "gemini-flash-latest"]
+    last_err = ""
+
+    for key in api_keys:
+        try:
+            client = genai.Client(api_key=key)
+            for model in rescue_models:
                 try:
-                    # 1. OCR Section
-                    reader = load_ocr_reader()
-                    img_array = np.array(img)
-                    ocr_result = reader.readtext(img_array, detail=0)
-                    extracted_text = " ".join(ocr_result)
-                    
-                    # 2. Gemini Analysis Prompt
-                    prompt = f"""
-                    System Role: Professional Educator & Analytical Summarizer.
-                    Task: Decode text from OCR and summarize for students.
-                    1. Identify Document/Topic Type.
-                    2. Provide detailed Executive Summary.
-                    3. Extract Key Points in simple bullet points.
-                    
-                    OCR RAW: {extracted_text}
-                    """
-                    
-                    # 3. FAST MODELS POOL (Aapki List Ke Mutabiq)
-                    FAST_MODELS = [
-                        "gemini-2.5-flash-lite",   # Aapki list se 
-                        "gemini-2.0-flash-lite",   # Aapki list se 
-                        "gemini-flash-latest"      # Aapki list se 
-                    ]
-                    
-                    report_text = None
-                    
-                    # 4. AUTO-RETRY & ROTATION LOGIC
-                    for attempt, model_name in enumerate(FAST_MODELS):
-                        try:
-                            # Naye Client() ki jagah GenerativeModel() ka use
-                            model = genai.GenerativeModel(model_name)
-                            response = model.generate_content([prompt, img])
-                            report_text = response.text
-                            
-                            st.success(f"✅ Analysis Complete! (Powered by: {model_name})")
-                            break # Success! Loop se bahar aayein
-                            
-                        except Exception as api_err:
-                            error_message = str(api_err)
-                            if "503" in error_message or "429" in error_message:
-                                if attempt < len(FAST_MODELS) - 1:
-                                    st.warning(f"⚠️ {model_name} par load hai. Agle model par switch kar raha hoon...")
-                                    time.sleep(2)
-                                else:
-                                    st.error("❌ Google ke sabhi fast servers abhi busy hain. Kripya thodi der baad try karein.")
-                            else:
-                                st.error(f"❌ Gemini Error: {error_message}")
-                                break
-                    
-                    # 5. RENDER UI & SAVE DATA
-                    if report_text:
-                        # Save to Firebase safely
-                        if db is not None:
-                            try:
-                                db.collection('scans').add({'timestamp': datetime.now(), 'summary': report_text})
-                            except Exception:
-                                pass # Agar save nahi hua toh app crash nahi hogi
-                                
-                        st.subheader("💡 Mission Summary Report")
-                        st.markdown(report_text)
-                        
-                        with st.expander("See Raw Extracted Text"):
-                            st.write(extracted_text)
-                        
-                        # PDF Download Generation
-                        st.markdown("---")
-                        pdf_data = create_pdf(report_text)
-                        st.download_button(
-                            label="📥 Download PDF", 
-                            data=pdf_data, 
-                            file_name=f"Turaab_Report_{datetime.now().strftime('%H%M%S')}.pdf"
-                        )
-                        
-                except Exception as err:
-                    st.error(f"System Error: {err}")
+                    contents = [image, prompt] if image else prompt
+                    res = client.models.generate_content(model=model, contents=contents)
+                    if res and res.text: return res.text
+                except Exception as e:
+                    last_err = str(e)
+                    continue # Try next model
+        except Exception as e:
+            last_err = str(e)
+            continue # Try next key
+            
+    return f"API Limit Error: Please try again tomorrow. Details: {last_err}"
 
+# --- 6. FUNCTION: ACTION CONTROLLER (V3.0 Strict Gatekeeper & Health) ---
+def handle_user_action(user_input):
+    cmd = user_input.strip().lower()
+    
+    if cmd == "help": return "COMMANDS: 'open [app]', 'type [text]', 'stop [app]', 'speak [text]', 'play', 'organize', 'pc health'"
+    elif cmd.startswith("type "): return turaab_actions.type_text_automation(user_input.strip()[5:])
+    elif cmd.startswith("stop "): return turaab_actions.stop_process(cmd.replace("stop ", ""))
+    elif cmd.startswith("speak "):
+        text_to_say = user_input.strip()[6:]
+        st.session_state.audio_stream = asyncio.run(generate_voice_output(text_to_say, "English"))
+        return f"Speaking: {text_to_say}"
+    elif cmd == "play":
+        st.session_state.play_request = True
+        return "Select media player from dropdown."
+    elif "organize" in cmd: return turaab_actions.organize_junk("D:/Turaab_Test")
+    
+    # --- V3.0 SYSTEM HEALTH ROUTING ---
+    elif cmd in ["system status", "pc health", "health check"]:
+        return turaab_actions.get_system_health()
+        
+    # --- V3.0 STRICT ROUTING ---
+    elif cmd.startswith("open "): 
+        # Sirf tabhi app khulega jab pehla word 'open ' hoga
+        return turaab_actions.execute_system_command(cmd.replace("open ", ""))
+    else:
+        # V3.0 SECURITY: Agar proper action command nahi mili
+        return "⚠️ Incomplete task check and try again...*** (E.g., type 'open msw')"    
+    
+# --- UI DESIGN ---
+st.set_page_config(page_title="Turaab Vision V2.8", layout="wide")
+
+with st.sidebar:
+    st.image("https://cdn-icons-png.flaticon.com/512/10431/10431032.png", width=80)
+    st.title("Turaab Control")
+    if st.button("🔄 Refresh System Index", use_container_width=True):
+        st.success(engine.v23_smart_scan())
+        st.balloons()
+    if st.button("🗑️ Clear Memory Cache"):
+        if os.path.exists("history.json"): os.remove("history.json")
+        st.success("Memory Cleared!")
+
+st.markdown("<h1 style='text-align: center; color: #4CAF50;'>بِسْمِ ٱللَّٰهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ</h1>", unsafe_allow_html=True)
+tab1, tab2, tab3 = st.tabs(["🔍 Search", "📸 Vision", "🎮 Commander"])
+
+with tab1:
+    st.subheader("Drive Search Engine")
+    query = st.text_input("Enter filename:")
+    if query:
+        results = engine.v24_deep_search(query)
+        if results:
+            st.write(f"🔍 Found {len(results)} items:")
+            for r in results:
+                with st.expander(r['path']): st.code(r['path'], language="text")
+        else: st.warning("No match found. Please Refresh System Index from sidebar.")
+
+with tab2:
+    st.subheader("AI Analysis")
+    file = st.file_uploader("Upload Image", type=['jpg', 'png'])
+    if file:
+        st.image(file, width=300)
+        if st.button("Analyze Image"):
+            mem = manage_history(file.name)
+            if mem:
+                st.session_state.rep = mem
+                st.success("Loaded from Memory.")
+            else:
+                with st.spinner("Analyzing..."):
+                    rep = ai_smart_engine("Summary in 5 bullet points.", Image.open(file))
+                    st.session_state.rep = rep
+                    manage_history(file.name, rep, "write")
+                    
+        if st.session_state.rep:
+            if "Error" in st.session_state.rep: st.error(st.session_state.rep)
+            else: st.info(st.session_state.rep)
+            st.write("---")
+            sel_lang = st.radio("Translate to:", ["English", "Hindi", "Urdu"], horizontal=True)
+            
+            if st.button("Translate & Speak"):
+                cache_key = f"{file.name}_{sel_lang}"
+                cached_trans = manage_history(cache_key)
+                if cached_trans:
+                    st.session_state.final_trans = cached_trans
+                    st.success("Loaded from Memory.")
+                else:
+                    with st.spinner(f"Translating to {sel_lang}..."):
+                        trans_text = ai_smart_engine(f"Translate to {sel_lang}: {st.session_state.rep}")
+                        st.session_state.final_trans = trans_text
+                        manage_history(cache_key, trans_text, "write")
+                
+                if "Error" not in st.session_state.final_trans:
+                    st.session_state.audio_stream = asyncio.run(generate_voice_output(st.session_state.final_trans, sel_lang))
+
+            if st.session_state.final_trans:
+                if "Error" in st.session_state.final_trans: st.error(st.session_state.final_trans)
+                else: st.success(st.session_state.final_trans)
+                if st.session_state.audio_stream:
+                    st.audio(st.session_state.audio_stream)
+                    st.session_state.audio_stream = None
+                    
+# --- TAB 3: COMMANDER (Polished UI & Enter Key Support) ---
+with tab3:
+    st.subheader("🎮 Universal Action Center")
+    
+    # st.form ensures pressing 'Enter' works exactly like clicking the button
+    with st.form(key="commander_form", clear_on_submit=True):
+        # UI Layout: Textbox bada (4) aur button chota (1) ek hi line mein
+        col1, col2 = st.columns([4, 1])
+        
+        with col1:
+            user_cmd = st.text_input(
+                "Enter Command:", 
+                label_visibility="collapsed", 
+                placeholder="Type command here and press Enter..."
+            )
+            
+        with col2:
+            # Form submit button
+            submit_btn = st.form_submit_button("Execute 🚀", use_container_width=True)
+
+    # Action Logic
+    if submit_btn:
+        if user_cmd:
+            with st.spinner("Processing..."):
+                res = handle_user_action(user_cmd)
+                st.success(f"**[{user_cmd}]** -> {res}") # Ye command bhi dikhayega aur result bhi
+                
+                # Audio check
+                if st.session_state.audio_stream:
+                    st.audio(st.session_state.audio_stream)
+                    st.session_state.audio_stream = None
+        else:
+            st.warning("⚠️ Please enter a command first.")
+
+    # Play Keyword Extra Logic
+    if st.session_state.play_request:
+        choice = st.selectbox("Select Player:", ["VLC", "Windows Media Player", "Chrome"])
+        if st.button("Launch Player"):
+            st.success(turaab_actions.execute_system_command(choice))
+            st.session_state.play_request = False
+            st.rerun()
