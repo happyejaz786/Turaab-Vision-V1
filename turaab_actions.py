@@ -1,8 +1,8 @@
 import os
 import subprocess
-import pyautogui
+#import pyautogui
 import time
-import pygetwindow as gw
+#import pygetwindow as gw
 import psutil
 import difflib  # NEW: For V3.0 Smart Fuzzy Matching
 
