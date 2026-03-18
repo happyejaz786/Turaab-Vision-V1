@@ -197,7 +197,8 @@ def type_text_automation(command_text):
             # Normal mode (bina app bataye, jahan mouse hoga wahan type karega)
             time.sleep(2.5)
             pyautogui.write(command_text, interval=0.05)
-            return f"📝 Typed text successfully! 🚀"
+            return "⚠️ Desktop Automation (Typing/Opening Apps) is disabled on Cloud. Please run locally on your PC! 💻"
+            #return f"📝 Typed text successfully! 🚀"
             
     except Exception as e:
         return f"⚠️ Typing Error: {str(e)}"
