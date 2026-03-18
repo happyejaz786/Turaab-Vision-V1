@@ -7,14 +7,25 @@ class TuraabFileEngine:
         self.drives = self._get_available_drives()
 
     def _get_available_drives(self):
-        import string
-        from ctypes import windll
+        import os
         drives = []
-        bitmask = windll.kernel32.GetLogicalDrives()
-        for letter in string.ascii_uppercase:
-            if bitmask & 1:
-                if letter != "C": drives.append(f"{letter}:\\")
-            bitmask >>= 1
+        
+        # Check if system is Windows ('nt' means Windows)
+        if os.name == 'nt':
+            import string
+            from ctypes import windll
+            try:
+                bitmask = windll.kernel32.GetLogicalDrives()
+                for letter in string.ascii_uppercase:
+                    if bitmask & 1:
+                        drives.append(f"{letter}:\\")
+                    bitmask >>= 1
+            except Exception:
+                pass
+        else:
+            # If it's Streamlit Cloud (Linux), don't look for C: or D: drives
+            drives = ['/'] 
+            
         return drives
 
     def v23_smart_scan(self):
