@@ -5,3 +5,5 @@ fpdf
 Pillow
 edge-tts
 psutil
+huggingface_hub
+python-dotenv
