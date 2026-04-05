@@ -85,6 +85,15 @@ def run_main_app():
         .sidebar-header { 
             font-size: 16px; font-weight: bold; color: #1a73e8; margin-top: 5px; border-bottom: 1px solid #ddd; padding-bottom: 5px;
         }
+        
+        /* Sidebar Delete Button Styling */
+        .stButton > button[key^="del_"] {
+            color: #ff4b4b;
+            border: none;
+            background: transparent;
+            padding: 0;
+            font-weight: bold;
+        }
         </style>
     """, unsafe_allow_html=True)
 
@@ -149,12 +158,24 @@ def run_main_app():
             st.session_state.current_chat_id = new_id
             st.rerun()
 
-        # MIDDLE: RECENT HISTORY
+        # MIDDLE: RECENT HISTORY WITH DELETE ICON
         st.markdown('<p class="sidebar-header">⏳ RECENT HISTORY</p>', unsafe_allow_html=True)
         for sid, sdata in list(st.session_state.sessions.items()):
-            if st.button(sdata["title"][:25], key=f"hist_{sid}", use_container_width=True):
-                st.session_state.current_chat_id = sid
-                st.rerun()
+            col_h, col_d = st.columns([0.85, 0.15])
+            with col_h:
+                if st.button(sdata["title"][:25], key=f"hist_{sid}", use_container_width=True):
+                    st.session_state.current_chat_id = sid
+                    st.rerun()
+            with col_d:
+                if st.button("❌", key=f"del_{sid}", help="Delete Chat"):
+                    del st.session_state.sessions[sid]
+                    # Agar current chat delete ho jaye toh reset karein
+                    if st.session_state.current_chat_id == sid:
+                        st.session_state.current_chat_id = None
+                    # Update local JSON file
+                    with open(SESSION_FILE, "w", encoding='utf-8') as f:
+                        json.dump(st.session_state.sessions, f, ensure_ascii=False, indent=4)
+                    st.rerun()
 
         # BOTTOM (FIXED VIA CSS): UPLOADER
         st.markdown('<br>', unsafe_allow_html=True)
@@ -163,6 +184,15 @@ def run_main_app():
             st.success(f"Selected: {up_file.name}")
 
     # --- 6. MAIN CHAT DISPLAY ---
+    # Handle if session was just deleted
+    if not st.session_state.current_chat_id or st.session_state.current_chat_id not in st.session_state.sessions:
+        if st.session_state.sessions:
+            st.session_state.current_chat_id = list(st.session_state.sessions.keys())[0]
+        else:
+            new_id = str(uuid.uuid4())
+            st.session_state.sessions[new_id] = {"title": "New chat", "messages": []}
+            st.session_state.current_chat_id = new_id
+
     curr_chat = st.session_state.sessions[st.session_state.current_chat_id]
     
     for i, m in enumerate(curr_chat["messages"]):
@@ -173,7 +203,6 @@ def run_main_app():
             col1, col2, col3 = st.columns([2, 2, 10])
             if m["role"] == "user":
                 if "enhanced" in m:
-                    # DIRECT BUTTON FOR PASSWORD LOCK (No Popover = No Bugs)
                     with col1:
                         if st.button("👁️ View Prompt", key=f"eye_{i}"):
                             show_secret_prompt(m["enhanced"])
